@@ -2,7 +2,7 @@
 name = "rain-oracle-server"
 version = "0.1.0"
 edition = "2021"
-description = "Reference signed context oracle server for Rain Protocol orders"
+description = "Reference signed context oracle server for Raindex orders"
 license = "MIT"
 
 [dependencies]

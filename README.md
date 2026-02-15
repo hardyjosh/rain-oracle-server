@@ -1,6 +1,6 @@
 # Rain Oracle Server
 
-Reference implementation of a signed context oracle server for [Rain Protocol](https://rainlang.xyz) orders.
+Reference implementation of a signed context oracle server for [Raindex](https://rainlang.xyz) orders.
 
 Serves `SignedContextV1` data that Rain orderbook takers can use when taking orders that require external data (e.g. price feeds).
 

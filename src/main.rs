@@ -5,7 +5,7 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "rain-oracle-server")]
-#[command(about = "Reference signed context oracle server for Rain Protocol")]
+#[command(about = "Reference signed context oracle server for Raindex")]
 struct Cli {
     /// Port to listen on
     #[arg(short, long, default_value = "3000", env = "PORT")]
