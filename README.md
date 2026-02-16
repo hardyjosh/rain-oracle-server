@@ -49,9 +49,9 @@ Response:
 }
 ```
 
-Context layout:
-- `context[0]`: ETH/USD price in 18 decimal fixed point
-- `context[1]`: expiry timestamp (unix seconds, `now + EXPIRY_SECONDS`)
+Context layout (all values are Rain DecimalFloats):
+- `context[0]`: ETH/USD price as Rain float (Pyth coefficient * 10^exponent, packed directly)
+- `context[1]`: expiry timestamp as Rain float (unix seconds, `now + EXPIRY_SECONDS`, exponent=0)
 
 ## Rainlang usage
 

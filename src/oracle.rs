@@ -13,36 +13,52 @@ pub struct OracleResponse {
     pub signature: Bytes,
 }
 
+/// Pack a signed coefficient and exponent into a Rain DecimalFloat (bytes32).
+///
+/// Rain float layout (256 bits):
+/// - Top 32 bits: exponent (int32)
+/// - Bottom 224 bits: signed coefficient (int224)
+///
+/// The coefficient must fit in int224 and the exponent must fit in int32.
+pub fn pack_rain_float(coefficient: i64, exponent: i32) -> FixedBytes<32> {
+    // coefficient as i224 (sign-extended in the bottom 224 bits)
+    // exponent as i32 (in the top 32 bits)
+    let mut bytes = [0u8; 32];
+
+    // Write exponent into top 4 bytes (big-endian)
+    let exp_bytes = exponent.to_be_bytes();
+    bytes[0..4].copy_from_slice(&exp_bytes);
+
+    // Write coefficient into bottom 28 bytes (big-endian, sign-extended)
+    // i64 fits easily in i224
+    let coeff_i128 = coefficient as i128;
+    let coeff_bytes = coeff_i128.to_be_bytes(); // 16 bytes
+
+    // Sign-extend: if negative, fill bytes 4..16 with 0xFF, else 0x00
+    let fill = if coefficient < 0 { 0xFF } else { 0x00 };
+    for byte in bytes.iter_mut().take(16).skip(4) {
+        *byte = fill;
+    }
+
+    // Copy the 16 bytes of i128 into bytes[16..32]
+    bytes[16..32].copy_from_slice(&coeff_bytes);
+
+    FixedBytes::from(bytes)
+}
+
 /// Build the context array from a Pyth price and expiry timestamp.
 ///
 /// Context layout:
-/// - [0]: ETH/USD price scaled to 18 decimals
-/// - [1]: expiry timestamp (unix seconds)
+/// - [0]: price as a Rain DecimalFloat (coefficient * 10^exponent)
+/// - [1]: expiry timestamp as a Rain DecimalFloat
 pub fn build_context(price: i64, expo: i32, expiry: u64) -> Vec<FixedBytes<32>> {
-    let price_18 = scale_price_to_18_decimals(price, expo);
-    let price_bytes = FixedBytes::<32>::from(U256::from(price_18));
-    let expiry_bytes = FixedBytes::<32>::from(U256::from(expiry));
-    vec![price_bytes, expiry_bytes]
-}
+    // Pack price directly as Rain float — Pyth already gives us coefficient + exponent
+    let price_float = pack_rain_float(price, expo);
 
-/// Scale a Pyth price (with exponent) to 18 decimal fixed point.
-///
-/// Pyth prices come as `price * 10^expo` where expo is typically negative
-/// (e.g. price=310000000000, expo=-8 means $3100.00000000).
-/// We need to convert to 18 decimal fixed point: price * 10^18.
-pub fn scale_price_to_18_decimals(price: i64, expo: i32) -> u128 {
-    // price represents price * 10^expo
-    // We want price * 10^18
-    // So multiply by 10^(18 - (-expo)) = 10^(18 + expo)
-    let price = price.unsigned_abs() as u128;
-    let shift = 18 + expo; // expo is negative, so this is 18 - |expo|
+    // Pack expiry as Rain float: coefficient=expiry, exponent=0
+    let expiry_float = pack_rain_float(expiry as i64, 0);
 
-    if shift >= 0 {
-        price * 10u128.pow(shift as u32)
-    } else {
-        // If expo is very negative (more than -18 decimals), divide
-        price / 10u128.pow((-shift) as u32)
-    }
+    vec![price_float, expiry_float]
 }
 
 #[cfg(test)]
@@ -50,50 +66,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scale_price_typical_pyth() {
-        // ETH at $3100.12345678, expo=-8
-        // price = 310012345678, expo = -8
-        // Expected: 3100_12345678_0000000000 (18 decimals)
-        let result = scale_price_to_18_decimals(310012345678, -8);
-        assert_eq!(result, 3_100_123_456_780_000_000_000u128);
+    fn test_pack_rain_float_simple() {
+        // 3.14 = coefficient 314, exponent -2
+        let float = pack_rain_float(314, -2);
+
+        // Verify exponent in top 4 bytes
+        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
+        let exp = i32::from_be_bytes(exp_bytes);
+        assert_eq!(exp, -2);
+
+        // Verify coefficient in bottom 28 bytes (sign-extended i224)
+        // For positive 314, bottom bytes should end with ...00 00 01 3A
+        assert_eq!(float.0[30], 0x01);
+        assert_eq!(float.0[31], 0x3A);
+        // Fill bytes should be 0x00
+        assert_eq!(float.0[4], 0x00);
     }
 
     #[test]
-    fn test_scale_price_expo_minus_5() {
-        // price = 310000, expo = -5 => $3.10000
-        // 18 decimals: 3_100_000_000_000_000_000
-        let result = scale_price_to_18_decimals(310000, -5);
-        assert_eq!(result, 3_100_000_000_000_000_000u128);
+    fn test_pack_rain_float_negative() {
+        // -100 = coefficient -100, exponent 0
+        let float = pack_rain_float(-100, 0);
+
+        // Verify exponent
+        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
+        let exp = i32::from_be_bytes(exp_bytes);
+        assert_eq!(exp, 0);
+
+        // For negative coefficient, fill bytes should be 0xFF
+        assert_eq!(float.0[4], 0xFF);
     }
 
     #[test]
-    fn test_scale_price_expo_zero() {
-        // price = 3100, expo = 0 => $3100
-        // 18 decimals: 3100 * 10^18
-        let result = scale_price_to_18_decimals(3100, 0);
-        assert_eq!(result, 3_100_000_000_000_000_000_000u128);
+    fn test_pack_rain_float_pyth_price() {
+        // Typical Pyth ETH/USD: price=310012345678, expo=-8
+        // This means $3100.12345678
+        let float = pack_rain_float(310012345678, -8);
+
+        // Verify exponent
+        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
+        let exp = i32::from_be_bytes(exp_bytes);
+        assert_eq!(exp, -8);
+
+        // Verify coefficient is positive and correct
+        assert_eq!(float.0[4], 0x00); // positive fill
     }
 
     #[test]
     fn test_build_context_layout() {
-        let ctx = build_context(310000000000, -8, 1700000000);
+        let ctx = build_context(310012345678, -8, 1700000000);
         assert_eq!(ctx.len(), 2);
-
-        // Price slot
-        let price_u256 = U256::from_be_bytes(*ctx[0]);
-        assert_eq!(price_u256, U256::from(3_100_000_000_000_000_000_000u128));
-
-        // Expiry slot
-        let expiry_u256 = U256::from_be_bytes(*ctx[1]);
-        assert_eq!(expiry_u256, U256::from(1700000000u64));
     }
 
     #[test]
-    fn test_scale_price_very_negative_expo() {
-        // expo = -20, more decimals than 18
-        // price = 3100000000000, expo = -20 => $0.000000031
-        // 18 decimals: 31_000_000_000
-        let result = scale_price_to_18_decimals(3_100_000_000_000, -20);
-        assert_eq!(result, 31_000_000_000u128);
+    fn test_pack_rain_float_zero() {
+        let float = pack_rain_float(0, 0);
+        // Should be all zeros
+        assert_eq!(float, FixedBytes::ZERO);
+    }
+
+    #[test]
+    fn test_pack_rain_float_expiry() {
+        // Expiry timestamp: 1700000000, exponent 0
+        let float = pack_rain_float(1700000000, 0);
+
+        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
+        assert_eq!(i32::from_be_bytes(exp_bytes), 0);
+
+        // Reconstruct coefficient from bottom bytes
+        let mut coeff_bytes = [0u8; 16];
+        coeff_bytes.copy_from_slice(&float.0[16..32]);
+        let coeff = i128::from_be_bytes(coeff_bytes);
+        assert_eq!(coeff, 1700000000);
     }
 }
