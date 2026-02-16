@@ -21,6 +21,7 @@
             rustToolchain
             pkgs.pkg-config
             pkgs.openssl
+            pkgs.flyctl
           ];
         };
 
