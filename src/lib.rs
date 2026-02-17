@@ -2,7 +2,14 @@ pub mod oracle;
 pub mod pyth;
 pub mod sign;
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use sign::Signer;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -37,7 +44,7 @@ pub fn create_app(state: AppState) -> Router {
     let shared_state = Arc::new(state);
     Router::new()
         .route("/", get(health))
-        .route("/context", get(get_signed_context))
+        .route("/context", get(get_signed_context).post(post_signed_context))
         .layer(CorsLayer::permissive())
         .with_state(shared_state)
 }
@@ -46,13 +53,30 @@ async fn health() -> &'static str {
     "ok"
 }
 
+/// POST handler — receives ABI-encoded (OrderV4, uint256, uint256, address)
+/// from the SDK. For now we ignore the body and return the same price data,
+/// but oracle implementations can use the order details to tailor responses.
+async fn post_signed_context(
+    State(state): State<Arc<AppState>>,
+    _body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    // TODO: decode ABI body for order-aware oracle responses
+    // For now, return the same signed context regardless of order details
+    build_signed_context_response(&state).await
+}
+
+/// GET handler — kept for backwards compat and simple testing.
 async fn get_signed_context(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Fetch ETH/USD price from Pyth Hermes
+    build_signed_context_response(&state).await
+}
+
+async fn build_signed_context_response(
+    state: &AppState,
+) -> Result<impl IntoResponse, AppError> {
     let price_data = pyth::fetch_price(&state.pyth_price_feed_id).await?;
 
-    // Build context: [price_18_decimals, expiry_timestamp]
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -61,7 +85,6 @@ async fn get_signed_context(
 
     let context = oracle::build_context(price_data.price, price_data.expo, expiry)?;
 
-    // Sign the context
     let (signature, signer) = state.signer.sign_context(&context).await?;
 
     let response = oracle::OracleResponse {
