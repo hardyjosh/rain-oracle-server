@@ -44,7 +44,7 @@ pub fn create_app(state: AppState) -> Router {
     let shared_state = Arc::new(state);
     Router::new()
         .route("/", get(health))
-        .route("/context", get(get_signed_context).post(post_signed_context))
+        .route("/context", post(post_signed_context))
         .layer(CorsLayer::permissive())
         .with_state(shared_state)
 }
@@ -62,13 +62,6 @@ async fn post_signed_context(
 ) -> Result<impl IntoResponse, AppError> {
     // TODO: decode ABI body for order-aware oracle responses
     // For now, return the same signed context regardless of order details
-    build_signed_context_response(&state).await
-}
-
-/// GET handler — kept for backwards compat and simple testing.
-async fn get_signed_context(
-    State(state): State<Arc<AppState>>,
-) -> Result<impl IntoResponse, AppError> {
     build_signed_context_response(&state).await
 }
 
