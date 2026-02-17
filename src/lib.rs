@@ -59,7 +59,7 @@ async fn get_signed_context(
         .as_secs();
     let expiry = now + state.expiry_seconds;
 
-    let context = oracle::build_context(price_data.price, price_data.expo, expiry);
+    let context = oracle::build_context(price_data.price, price_data.expo, expiry)?;
 
     // Sign the context
     let (signature, signer) = state.signer.sign_context(&context).await?;

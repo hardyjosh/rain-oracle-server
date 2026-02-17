@@ -1,4 +1,5 @@
 use alloy::primitives::{Address, Bytes, FixedBytes};
+use rain_math_float::Float;
 use serde::{Deserialize, Serialize};
 
 /// Oracle response matching the SDK's expected format.
@@ -12,42 +13,56 @@ pub struct OracleResponse {
     pub signature: Bytes,
 }
 
-/// Pack a signed coefficient and exponent into a Rain DecimalFloat (bytes32).
+/// Format a Pyth price (coefficient * 10^expo) as a decimal string for Float::parse.
 ///
-/// Rain float layout (256 bits, big-endian):
-/// - Top 32 bits (bytes 0..4): exponent as int32
-/// - Bottom 224 bits (bytes 4..32): coefficient as int224 (sign-extended)
-///
-/// Pyth gives coefficient * 10^exponent directly, which maps 1:1 to Rain's format.
-pub fn pack_rain_float(coefficient: i64, exponent: i32) -> FixedBytes<32> {
-    let mut bytes = [0u8; 32];
+/// e.g. price=310012345678, expo=-8 => "3100.12345678"
+fn format_pyth_price(price: i64, expo: i32) -> String {
+    if expo >= 0 {
+        let mut s = price.to_string();
+        for _ in 0..expo {
+            s.push('0');
+        }
+        s
+    } else {
+        let abs_expo = (-expo) as usize;
+        let is_negative = price < 0;
+        let digits = price.unsigned_abs().to_string();
 
-    // Write exponent into top 4 bytes (big-endian)
-    bytes[0..4].copy_from_slice(&exponent.to_be_bytes());
-
-    // Write coefficient into bottom 28 bytes (big-endian, sign-extended i224)
-    // i64 fits in i224. Sign-extend by filling bytes 4..16 with 0xFF (negative) or 0x00 (positive).
-    let fill = if coefficient < 0 { 0xFF } else { 0x00 };
-    for byte in bytes.iter_mut().take(16).skip(4) {
-        *byte = fill;
+        if digits.len() <= abs_expo {
+            let zeros = abs_expo - digits.len();
+            let prefix = if is_negative { "-0." } else { "0." };
+            format!("{}{}{}", prefix, "0".repeat(zeros), digits)
+        } else {
+            let split_pos = digits.len() - abs_expo;
+            let prefix = if is_negative { "-" } else { "" };
+            format!("{}{}.{}", prefix, &digits[..split_pos], &digits[split_pos..])
+        }
     }
-
-    // i64 as i128 -> 16 big-endian bytes into bytes[16..32]
-    let coeff_bytes = (coefficient as i128).to_be_bytes();
-    bytes[16..32].copy_from_slice(&coeff_bytes);
-
-    FixedBytes::from(bytes)
 }
 
 /// Build the context array from a Pyth price and expiry timestamp.
 ///
+/// All values are encoded as Rain DecimalFloats (bytes32) via Float::parse.
+///
 /// Context layout:
-/// - [0]: price as a Rain DecimalFloat (coefficient * 10^exponent)
-/// - [1]: expiry timestamp as a Rain DecimalFloat (coefficient=expiry, exponent=0)
-pub fn build_context(price: i64, expo: i32, expiry: u64) -> Vec<FixedBytes<32>> {
-    let price_float = pack_rain_float(price, expo);
-    let expiry_float = pack_rain_float(expiry as i64, 0);
-    vec![price_float, expiry_float]
+/// - [0]: price as Rain DecimalFloat
+/// - [1]: expiry timestamp as Rain DecimalFloat
+pub fn build_context(price: i64, expo: i32, expiry: u64) -> Result<Vec<FixedBytes<32>>, anyhow::Error> {
+    let price_str = format_pyth_price(price, expo);
+    let price_float = Float::parse(price_str.clone())
+        .map_err(|e| anyhow::anyhow!("Failed to parse price '{}' as Rain float: {:?}", price_str, e))?;
+
+    let expiry_str = expiry.to_string();
+    let expiry_float = Float::parse(expiry_str.clone())
+        .map_err(|e| anyhow::anyhow!("Failed to parse expiry '{}' as Rain float: {:?}", expiry_str, e))?;
+
+    let price_bytes: alloy::primitives::B256 = price_float.into();
+    let expiry_bytes: alloy::primitives::B256 = expiry_float.into();
+
+    Ok(vec![
+        FixedBytes::from(price_bytes),
+        FixedBytes::from(expiry_bytes),
+    ])
 }
 
 #[cfg(test)]
@@ -55,59 +70,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pack_rain_float_simple() {
-        // 3.14 = coefficient 314, exponent -2
-        let float = pack_rain_float(314, -2);
-
-        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
-        assert_eq!(i32::from_be_bytes(exp_bytes), -2);
-
-        // Positive coefficient, bottom bytes should contain 314 = 0x13A
-        assert_eq!(float.0[30], 0x01);
-        assert_eq!(float.0[31], 0x3A);
-        assert_eq!(float.0[4], 0x00); // positive fill
+    fn test_format_pyth_price_typical() {
+        assert_eq!(format_pyth_price(310012345678, -8), "3100.12345678");
     }
 
     #[test]
-    fn test_pack_rain_float_negative() {
-        let float = pack_rain_float(-100, 0);
-
-        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
-        assert_eq!(i32::from_be_bytes(exp_bytes), 0);
-        assert_eq!(float.0[4], 0xFF); // negative fill
+    fn test_format_pyth_price_small() {
+        assert_eq!(format_pyth_price(31, -5), "0.00031");
     }
 
     #[test]
-    fn test_pack_rain_float_pyth_price() {
-        // Typical Pyth ETH/USD: price=310012345678, expo=-8 => $3100.12345678
-        let float = pack_rain_float(310012345678, -8);
-
-        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
-        assert_eq!(i32::from_be_bytes(exp_bytes), -8);
-        assert_eq!(float.0[4], 0x00); // positive
+    fn test_format_pyth_price_positive_expo() {
+        assert_eq!(format_pyth_price(3100, 0), "3100");
+        assert_eq!(format_pyth_price(31, 2), "3100");
     }
 
     #[test]
-    fn test_build_context_layout() {
-        let ctx = build_context(310012345678, -8, 1700000000);
+    fn test_format_pyth_price_negative() {
+        assert_eq!(format_pyth_price(-310012345678, -8), "-3100.12345678");
+    }
+
+    #[test]
+    fn test_build_context_succeeds() {
+        let ctx = build_context(310012345678, -8, 1700000000).unwrap();
         assert_eq!(ctx.len(), 2);
     }
 
     #[test]
-    fn test_pack_rain_float_zero() {
-        let float = pack_rain_float(0, 0);
-        assert_eq!(float, FixedBytes::ZERO);
+    fn test_build_context_price_roundtrip() {
+        let ctx = build_context(310012345678, -8, 1700000000).unwrap();
+
+        let price_float = Float::from(alloy::primitives::B256::from(ctx[0]));
+        let formatted = price_float.format().unwrap();
+        assert_eq!(formatted, "3100.12345678");
     }
 
     #[test]
-    fn test_pack_rain_float_expiry() {
-        let float = pack_rain_float(1700000000, 0);
+    fn test_build_context_expiry_roundtrip() {
+        let ctx = build_context(310012345678, -8, 1700000000).unwrap();
 
-        let exp_bytes: [u8; 4] = float.0[0..4].try_into().unwrap();
-        assert_eq!(i32::from_be_bytes(exp_bytes), 0);
-
-        let mut coeff_bytes = [0u8; 16];
-        coeff_bytes.copy_from_slice(&float.0[16..32]);
-        assert_eq!(i128::from_be_bytes(coeff_bytes), 1700000000);
+        let expiry_float = Float::from(alloy::primitives::B256::from(ctx[1]));
+        let formatted = expiry_float.format().unwrap();
+        // Float::format uses scientific notation for large numbers
+        assert_eq!(formatted, "1.7e9");
     }
 }
