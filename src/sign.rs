@@ -36,8 +36,11 @@ impl Signer {
         // keccak256 of the packed data
         let hash = alloy::primitives::keccak256(&packed);
 
-        // EIP-191 sign the hash
-        let signature = self.inner.sign_hash(&hash).await?;
+        // Sign with EIP-191 prefix: the Rain orderbook contract applies
+        // toEthSignedMessageHash(hash) before ecrecover, so we must sign
+        // the raw hash using sign_message (which internally prefixes with
+        // "\x19Ethereum Signed Message:\n32" before signing).
+        let signature = self.inner.sign_message(hash.as_slice()).await?;
 
         Ok((Bytes::from(signature.as_bytes().to_vec()), self.address()))
     }
