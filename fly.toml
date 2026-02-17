@@ -6,6 +6,12 @@ primary_region = "lhr"
 [env]
   PORT = "8080"
   RUST_LOG = "info"
+  # ETH/USD Pyth feed — price is base(ETH)/quote(USD)
+  PYTH_PRICE_FEED_ID = "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
+  # WETH on Base (base asset — priced by the feed)
+  BASE_TOKEN = "0x4200000000000000000000000000000000000006"
+  # USDC on Base (quote asset — denomination of the feed)
+  QUOTE_TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
 [http_service]
   internal_port = 8080

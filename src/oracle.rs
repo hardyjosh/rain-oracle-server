@@ -2,6 +2,10 @@ use alloy::primitives::{Address, Bytes, FixedBytes};
 use rain_math_float::Float;
 use serde::{Deserialize, Serialize};
 
+use std::ops::Div;
+
+use crate::PriceDirection;
+
 /// Oracle response matching the SDK's expected format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OracleResponse {
@@ -44,19 +48,39 @@ fn format_pyth_price(price: i64, expo: i32) -> String {
 ///
 /// All values are encoded as Rain DecimalFloats (bytes32) via Float::parse.
 ///
+/// If direction is `Inverted`, the price is inverted (1/price) before encoding.
+/// This is needed when input is the base asset and output is the quote asset,
+/// because the order wants "how many base per quote" rather than "how many quote per base".
+///
 /// Context layout:
 /// - [0]: price as Rain DecimalFloat
 /// - [1]: expiry timestamp as Rain DecimalFloat
-pub fn build_context(price: i64, expo: i32, expiry: u64) -> Result<Vec<FixedBytes<32>>, anyhow::Error> {
+pub fn build_context(
+    price: i64,
+    expo: i32,
+    expiry: u64,
+    direction: PriceDirection,
+) -> Result<Vec<FixedBytes<32>>, anyhow::Error> {
     let price_str = format_pyth_price(price, expo);
     let price_float = Float::parse(price_str.clone())
         .map_err(|e| anyhow::anyhow!("Failed to parse price '{}' as Rain float: {:?}", price_str, e))?;
+
+    // Apply direction — invert if needed
+    let final_price = match direction {
+        PriceDirection::AsIs => price_float,
+        PriceDirection::Inverted => {
+            let one = Float::parse("1".to_string())
+                .map_err(|e| anyhow::anyhow!("Failed to parse '1' as Rain float: {:?}", e))?;
+            (one / price_float)
+                .map_err(|e| anyhow::anyhow!("Failed to invert price: {:?}", e))?
+        }
+    };
 
     let expiry_str = expiry.to_string();
     let expiry_float = Float::parse(expiry_str.clone())
         .map_err(|e| anyhow::anyhow!("Failed to parse expiry '{}' as Rain float: {:?}", expiry_str, e))?;
 
-    let price_bytes: alloy::primitives::B256 = price_float.into();
+    let price_bytes: alloy::primitives::B256 = final_price.into();
     let expiry_bytes: alloy::primitives::B256 = expiry_float.into();
 
     Ok(vec![
@@ -91,14 +115,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_context_succeeds() {
-        let ctx = build_context(310012345678, -8, 1700000000).unwrap();
+    fn test_build_context_as_is() {
+        let ctx = build_context(310012345678, -8, 1700000000, PriceDirection::AsIs).unwrap();
         assert_eq!(ctx.len(), 2);
-    }
-
-    #[test]
-    fn test_build_context_price_roundtrip() {
-        let ctx = build_context(310012345678, -8, 1700000000).unwrap();
 
         let price_float = Float::from(alloy::primitives::B256::from(ctx[0]));
         let formatted = price_float.format().unwrap();
@@ -106,12 +125,22 @@ mod tests {
     }
 
     #[test]
+    fn test_build_context_inverted() {
+        // Price is 2000.0, inverted should be 0.0005
+        let ctx = build_context(200000000000, -8, 1700000000, PriceDirection::Inverted).unwrap();
+        assert_eq!(ctx.len(), 2);
+
+        let price_float = Float::from(alloy::primitives::B256::from(ctx[0]));
+        let formatted = price_float.format().unwrap();
+        assert_eq!(formatted, "5e-4"); // 1/2000 = 0.0005
+    }
+
+    #[test]
     fn test_build_context_expiry_roundtrip() {
-        let ctx = build_context(310012345678, -8, 1700000000).unwrap();
+        let ctx = build_context(310012345678, -8, 1700000000, PriceDirection::AsIs).unwrap();
 
         let expiry_float = Float::from(alloy::primitives::B256::from(ctx[1]));
         let formatted = expiry_float.format().unwrap();
-        // Float::format uses scientific notation for large numbers
         assert_eq!(formatted, "1.7e9");
     }
 }
