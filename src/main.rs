@@ -3,6 +3,13 @@ use rain_oracle_server::{create_app, AppState, TokenPairConfig};
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
+/// WETH on Base
+const BASE_TOKEN: &str = "0x4200000000000000000000000000000000000006";
+/// USDC on Base
+const QUOTE_TOKEN: &str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+/// ETH/USD Pyth price feed ID
+const PYTH_PRICE_FEED_ID: &str = "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace";
+
 #[derive(Parser)]
 #[command(name = "rain-oracle-server")]
 #[command(about = "Reference signed context oracle server for Raindex")]
@@ -14,22 +21,6 @@ struct Cli {
     /// Private key for EIP-191 signing (hex, with or without 0x prefix)
     #[arg(long, env = "SIGNER_PRIVATE_KEY")]
     signer_private_key: String,
-
-    /// Pyth price feed ID (the feed returns base/quote, e.g. ETH/USD)
-    #[arg(
-        long,
-        default_value = "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
-        env = "PYTH_PRICE_FEED_ID"
-    )]
-    pyth_price_feed_id: String,
-
-    /// Base token address (the asset priced BY the feed, e.g. WETH for ETH/USD)
-    #[arg(long, env = "BASE_TOKEN")]
-    base_token: String,
-
-    /// Quote token address (the denomination of the feed, e.g. USDC for ETH/USD)
-    #[arg(long, env = "QUOTE_TOKEN")]
-    quote_token: String,
 
     /// Signed context expiry in seconds
     #[arg(long, default_value = "5", env = "EXPIRY_SECONDS")]
@@ -44,11 +35,11 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    let token_pair = TokenPairConfig::new(&cli.base_token, &cli.quote_token)?;
+    let token_pair = TokenPairConfig::new(BASE_TOKEN, QUOTE_TOKEN)?;
 
     let state = AppState::new(
         &cli.signer_private_key,
-        &cli.pyth_price_feed_id,
+        PYTH_PRICE_FEED_ID,
         cli.expiry_seconds,
         token_pair,
     )?;
