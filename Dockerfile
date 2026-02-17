@@ -1,11 +1,20 @@
 FROM rust:1.85-slim AS builder
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y pkg-config libssl-dev git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+
+# Copy source and config
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY lib ./lib
+COPY .gitmodules ./
+
+# Clone submodules directly (avoids needing them initialized locally)
+RUN git init && \
+    git submodule add https://github.com/rainlanguage/rain.math.float lib/rain.math.float && \
+    git submodule add https://github.com/rainlanguage/rain.wasm lib/rain.wasm
+
 # Place pre-built Solidity artifact where rain.math.float expects it
 COPY artifacts/DecimalFloat.json lib/rain.math.float/out/DecimalFloat.sol/DecimalFloat.json
+
 RUN cargo build --release
 
 FROM debian:bookworm-slim
