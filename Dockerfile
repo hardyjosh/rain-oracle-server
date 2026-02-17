@@ -3,6 +3,9 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY lib ./lib
+# Place pre-built Solidity artifact where rain.math.float expects it
+COPY artifacts/DecimalFloat.json lib/rain.math.float/out/DecimalFloat.sol/DecimalFloat.json
 RUN cargo build --release
 
 FROM debian:bookworm-slim
