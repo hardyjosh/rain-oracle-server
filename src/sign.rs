@@ -1,6 +1,6 @@
-use alloy_primitives::{Address, Bytes, FixedBytes};
-use alloy_signer::Signer as AlloySigner;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::primitives::{Address, Bytes, FixedBytes};
+use alloy::signers::Signer as AlloySigner;
+use alloy::signers::local::PrivateKeySigner;
 // EIP-191 signing for Rain signed context
 
 /// EIP-191 signer for Rain signed context.
@@ -34,7 +34,7 @@ impl Signer {
         let packed: Vec<u8> = context.iter().flat_map(|b| b.as_slice().to_vec()).collect();
 
         // keccak256 of the packed data
-        let hash = alloy_primitives::keccak256(&packed);
+        let hash = alloy::primitives::keccak256(&packed);
 
         // EIP-191 sign the hash
         let signature = self.inner.sign_hash(&hash).await?;
@@ -46,7 +46,7 @@ impl Signer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::U256;
+    use alloy::primitives::U256;
 
     // Test private key — DO NOT use in production
     const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";

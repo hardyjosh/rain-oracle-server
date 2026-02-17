@@ -28,7 +28,7 @@ impl AppState {
         })
     }
 
-    pub fn signer_address(&self) -> alloy_primitives::Address {
+    pub fn signer_address(&self) -> alloy::primitives::Address {
         self.signer.address()
     }
 }
