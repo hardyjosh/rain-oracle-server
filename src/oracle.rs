@@ -2,8 +2,6 @@ use alloy::primitives::{Address, Bytes, FixedBytes};
 use rain_math_float::Float;
 use serde::{Deserialize, Serialize};
 
-use std::ops::Div;
-
 use crate::PriceDirection;
 
 /// Oracle response matching the SDK's expected format.

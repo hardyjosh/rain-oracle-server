@@ -156,7 +156,7 @@ async fn post_signed_context(
 ) -> Result<impl IntoResponse, AppError> {
     // Decode the ABI-encoded request body
     let (order, input_io_index, output_io_index, _counterparty) =
-        <OracleRequestBody>::abi_decode(&body, true)
+        <OracleRequestBody>::abi_decode(&body)
             .map_err(|e| OracleRequestError::InvalidBody(e.to_string()))?;
 
     let input_idx = input_io_index.try_into().unwrap_or(usize::MAX);
