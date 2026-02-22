@@ -21,13 +21,12 @@ use tower_http::cors::CorsLayer;
 
 // Minimal OrderV4 definition for ABI decoding — avoids pulling in rain_orderbook_bindings.
 sol! {
-    struct IO {
+    struct IOV2 {
         address token;
-        uint8 decimals;
-        uint256 vaultId;
+        bytes32 vaultId;
     }
 
-    struct EvaluableV3 {
+    struct EvaluableV4 {
         address interpreter;
         address store;
         bytes bytecode;
@@ -35,9 +34,9 @@ sol! {
 
     struct OrderV4 {
         address owner;
-        EvaluableV3 evaluable;
-        IO[] validInputs;
-        IO[] validOutputs;
+        EvaluableV4 evaluable;
+        IOV2[] validInputs;
+        IOV2[] validOutputs;
         bytes32 nonce;
     }
 }
